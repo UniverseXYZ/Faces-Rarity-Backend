@@ -2,10 +2,9 @@ package helpers
 
 import (
 	"context"
-	"fmt"
 	"github.com/ethereum/go-ethereum/common"
+	log "github.com/sirupsen/logrus"
 	"go.mongodb.org/mongo-driver/bson"
-	"log"
 	"os"
 	"rarity-backend/config"
 	"rarity-backend/constants"
@@ -191,40 +190,39 @@ func SortMorphEvents(eventLogs []types.Log) {
 	})
 }
 
+// UpdateNetworkIdInformation @UpdateNetworkIdInformation seeks through all Mint and Burn logs of some events batch on Polygon
+// and triggers an update to the state of a particular id if such event is caught
 func UpdateNetworkIdInformation(batchLogs []types.Log, dbName *string, rarityCollection *string) {
 	ctx := context.TODO()
 	for _, eventLog := range batchLogs {
 		if eventLog.Topics[0] == common.HexToHash(constants.MintEvent.Signature) {
 			tokenId := int(eventLog.Topics[1].Big().Int64())
-			_ = updateTokenNetworkId(tokenId, dbName, rarityCollection, false, &ctx)
+			_ = UpdateTokenNetworkId(tokenId, dbName, rarityCollection, "Polygon", &ctx)
 		} else if eventLog.Topics[0] == common.HexToHash(constants.TransferEvent.Signature) {
 			tokenId := int(eventLog.Topics[3].Big().Int64())
 			if eventLog.Topics[2] == common.HexToHash("0x0000000000000000000000000000000000000000") { // this means it's a burn event
-				_ = updateTokenNetworkId(tokenId, dbName, rarityCollection, true, &ctx)
+				_ = UpdateTokenNetworkId(tokenId, dbName, rarityCollection, "Pending", &ctx)
 			}
 		}
 	}
 }
 
-// @updateTokenNetworkId Updates the network in the MongoDB database rarity collection of a particular tokenID
+// UpdateTokenNetworkId @updateTokenNetworkId Updates the network in the MongoDB database rarity collection of a particular tokenID
 // Whenever a mint or burn event is caught on the Polygon contract
-func updateTokenNetworkId(tokenId int, dbName *string, rarityCollection *string, ethereum bool, ctx *context.Context) error {
+func UpdateTokenNetworkId(tokenId int, dbName *string, rarityCollection *string, state string, ctx *context.Context) error {
 	collection, err := db.GetMongoDbCollection(*dbName, *rarityCollection)
 	if err != nil {
 		return err
 	}
 	filter := bson.D{{"tokenid", tokenId}}
-	network := "Polygon"
-	if ethereum {
-		network = "Ethereum"
-	}
 	*ctx = context.TODO()
-	updateNetworkRecord := bson.D{{"$set", bson.D{{"network", network}}}}
+	updateNetworkRecord := bson.D{{"$set", bson.D{{"network", state}}}}
 	_, err = collection.UpdateOne(*ctx, filter, updateNetworkRecord)
 	if err != nil {
-		log.Printf("Could not update network data for tokenID [%d]", tokenId)
+		log.WithFields(log.Fields{"original error: ": err}).Errorf("could not update network data for tokenID [%d]", tokenId)
+		//log.Printf("Could not update network data for tokenID [%d]", tokenId)
 		return err
 	}
-	log.Println(fmt.Sprintf("Successfully updated network for id [%v] to [%v]", tokenId, network))
+	log.Infof("Successfully updated network for id [%v] to [%v]", tokenId, state)
 	return nil
 }
