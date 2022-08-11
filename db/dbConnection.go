@@ -2,16 +2,14 @@ package db
 
 import (
 	"context"
-	"fmt"
-	"log"
-	"os"
-	"sync"
-	"time"
-
 	"github.com/joho/godotenv"
+	log "github.com/sirupsen/logrus"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
+	"os"
+	"sync"
+	"time"
 )
 
 var once sync.Once
@@ -24,12 +22,12 @@ var instance *mongo.Client
 // If connection exists, it will return the instance of the database
 func GetDbConnection() (*mongo.Client, error) {
 	if instance != nil {
-		log.Println("Fetching existing MongoDB client")
+		log.Info("Fetching existing MongoDB client")
 		err := instance.Ping(context.Background(), nil)
 		if err != nil {
 			return nil, err
 		} else {
-			log.Println("Successfully fetched existing MongoDB client.")
+			log.Info("Successfully fetched existing MongoDB client.")
 			return instance, nil
 		}
 	}
@@ -60,7 +58,7 @@ func GetDbConnection() (*mongo.Client, error) {
 	if err != nil {
 		return nil, err
 	} else {
-		log.Println("Connected to mongo client")
+		log.Info("Connected to mongo client")
 	}
 	return instance, nil
 }
@@ -119,12 +117,12 @@ func connectToDb() *mongo.Client {
 		log.Fatalf("Failed to ping cluster: %v", err)
 	}
 
-	fmt.Println("Connected to DocumentDB!")
+	log.Info("Connected to DocumentDB!")
 
 	return client
 }
 
-// checkConnectionAndRestore ping the client and it throws and error, it tries to reconnect.
+// checkConnectionAndRestore ping the client, and it throws and error, it tries to reconnect.
 func checkConnectionAndRestore(client *mongo.Client) {
 	err := client.Ping(context.Background(), readpref.Primary())
 
@@ -153,9 +151,8 @@ func DisconnectDB() {
 
 	err := instance.Disconnect(context.TODO())
 	if err != nil {
-		fmt.Println("FAILED TO CLOSE Mongo Connection")
-		fmt.Println(err)
+		log.WithFields(log.Fields{"original error: ": err}).Error("failed to close mongo connection")
 	} else {
-		fmt.Println("Connection to MongoDB closed.")
+		log.Infof("Connection to MongoDB closed.")
 	}
 }

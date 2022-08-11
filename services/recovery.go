@@ -4,7 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"github.com/ethereum/go-ethereum/common"
+	log "github.com/sirupsen/logrus"
 	"math/big"
 	"net/http"
 	"os"
@@ -26,8 +27,12 @@ import (
 )
 
 // RecoverProcess is the main function which handles the polling and processing of mint and morph events
-func RecoverProcess(ethClient *dlt.EthereumClient, polygonClient *dlt.EthereumClient, contractAbi abi.ABI, instance *store.Store, instancePolygon *store.Store, address string, configService *structs.ConfigService,
+func RecoverProcess(ethClient *dlt.EthereumClient, polygonClient *dlt.EthereumClient, contractAbi abi.ABI, instance *store.Store, instancePolygon *store.Store, address string, rootTunnelAddress string, configService *structs.ConfigService,
 	dbInfo structs.DBInfo, txState map[string]map[uint]bool, morphCostMap map[string]float32) error {
+	log.SetFormatter(&log.TextFormatter{
+		FullTimestamp:   true,
+		TimestampFormat: "2006-01-02 15:04:05",
+	})
 	var wg sync.WaitGroup
 	mintsMutex := structs.MintsMutex{TokensMap: make(map[string]bool)}
 	eventLogsMutex := structs.EventLogsMutex{EventLogs: []types.Log{}}
@@ -36,11 +41,13 @@ func RecoverProcess(ethClient *dlt.EthereumClient, polygonClient *dlt.EthereumCl
 
 	lastProcessedBlockNumber, err := collectEvents(ethClient, address, dbInfo.FacesDBName, &eventLogsMutex, &wg)
 	if err != nil {
-		log.Printf("Error collecting events: $%v", err)
+		log.WithFields(log.Fields{"original error: ": err}).Error("Error collecting events from ethereum network")
 		return err
 	}
 
-	fmt.Println("Last processed block number: ", lastProcessedBlockNumber)
+	log.WithFields(log.Fields{
+		"network": "Ethereum",
+	}).Infof("Last processed block number: [%v]", lastProcessedBlockNumber)
 
 	mintsLogs := make([]types.Log, 0)
 
@@ -52,6 +59,12 @@ func RecoverProcess(ethClient *dlt.EthereumClient, polygonClient *dlt.EthereumCl
 			wg.Add(1)
 			processMint(ethLog, &wg, contractAbi, configService, &mintsMutex)
 			mintsLogs = append(mintsLogs, ethLog)
+		case constants.TransferEvent.Signature:
+			tokenId := int(ethLog.Topics[3].Big().Int64())
+			ctx := context.TODO()
+			if ethLog.Topics[1] == common.HexToHash(rootTunnelAddress) { // this means it's a burn event
+				_ = helpers.UpdateTokenNetworkId(tokenId, &dbInfo.FacesDBName, &dbInfo.RarityCollectionName, "Ethereum", &ctx)
+			}
 		}
 	}
 
@@ -89,18 +102,20 @@ func RecoverProcess(ethClient *dlt.EthereumClient, polygonClient *dlt.EthereumCl
 		ethLog := tokenToMorphEvent[id]
 		err = processFinalMorphs(ethLog, ethClient, contractAbi, instance, configService, dbInfo, genesMap, morphCostMap)
 		if err != nil {
-			log.Println("Error processing final morphs. ", err)
+			log.WithFields(log.Fields{"original error: ": err}).Error("error processing final morphs on ethereum..")
 			return err
 		}
 	}
 
 	// Persist Ranking
 	handlers.UpdateAllRanking(dbInfo.FacesDBName, dbInfo.RarityCollectionName)
-	// Persist block for the Ethereum contract
+	// Persist block in Ethereum
 	res, err := handlers.CreateOrUpdateLastProcessedBlock(lastProcessedBlockNumber, dbInfo.FacesDBName, dbInfo.BlocksCollectionName)
-	fmt.Println(res)
+	log.WithFields(log.Fields{
+		"network": "Ethereum",
+	}).Info(res)
 	if err != nil {
-		log.Println("Error creating/updating last processed block, ", err)
+		log.WithFields(log.Fields{"network:": "Ethereum", "original error: ": err}).Error("error creating/updating last processed block...")
 		return err
 	}
 
@@ -129,18 +144,24 @@ func RecoverProcess(ethClient *dlt.EthereumClient, polygonClient *dlt.EthereumCl
 		polygonLog := tokenToMorphEventPolygon[id]
 		err = processFinalMorphs(polygonLog, polygonClient, contractAbi, instancePolygon, configService, dbInfo, genesMapPolygon, morphCostMap)
 		if err != nil {
-			log.Println("Error processing final morphs on polygon. ", err)
+			log.WithFields(log.Fields{"original error: ": err}).Error("error processing final morphs on polygon..")
 			return err
 		}
 	}
 
 	helpers.UpdateNetworkIdInformation(currentBatchLogsPolygon, &dbInfo.FacesDBName, &dbInfo.RarityCollectionName)
 
-	fmt.Println("Last processed block number on Polygon: ", lastProcessedBlockNumberPolygon)
+	log.WithFields(log.Fields{
+		"network": "Polygon",
+	}).Infof("Last processed block number: [%v]", lastProcessedBlockNumberPolygon)
+	// fmt.Println("Last processed block number on Polygon: ", lastProcessedBlockNumberPolygon)
 	res, err = handlers.CreateOrUpdateLastProcessedBlock(lastProcessedBlockNumberPolygon, dbInfo.FacesDBName, dbInfo.BlocksCollectionNamePolygon)
-	fmt.Println(res)
+	log.WithFields(log.Fields{
+		"network": "Polygon",
+	}).Info(res)
 	if err != nil {
-		log.Println("Error creating/updating last processed block for polygon, ", err)
+		log.WithFields(log.Fields{"network": "Polygon", "original error: ": err}).Error("error creating/updating last processed block...")
+		//log.Println("Error creating/updating last processed block for polygon, ", err)
 		return err
 	}
 

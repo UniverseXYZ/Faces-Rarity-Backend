@@ -2,7 +2,7 @@ package handlers
 
 import (
 	"context"
-	"log"
+	log "github.com/sirupsen/logrus"
 	"rarity-backend/constants"
 	"rarity-backend/db"
 	"rarity-backend/models"
@@ -23,7 +23,7 @@ func GetMorphPriceMapping(polymorphDBName string, priceCollection string) (map[s
 	var morphPrices []models.MorphCost
 	results, err := collection.Find(context.Background(), bson.M{})
 	if err != nil {
-		log.Println("Error finding morph cost document. ", err)
+		log.WithFields(log.Fields{"original error: ": err}).Error("error finding morph cost document")
 		return nil, err
 	}
 	results.All(context.Background(), &morphPrices)
@@ -41,6 +41,11 @@ func GetMorphPriceMapping(polymorphDBName string, priceCollection string) (map[s
 //
 // This price will be fetched and stored in memory every time the process starts.
 func SaveMorphPrice(morphPrice models.MorphCost, polymorphDBName string, priceCollection string) error {
+	log.SetFormatter(&log.TextFormatter{
+		FullTimestamp:   true,
+		TimestampFormat: "2006-01-02 15:04:05",
+	})
+
 	collection, err := db.GetMongoDbCollection(polymorphDBName, priceCollection)
 	if err != nil {
 		return err
@@ -56,10 +61,10 @@ func SaveMorphPrice(morphPrice models.MorphCost, polymorphDBName string, priceCo
 
 	_, err = collection.UpdateOne(context.Background(), filter, update, opts)
 	if err != nil {
-		log.Println("Error updating morph price. ", err)
+		log.WithFields(log.Fields{"original error: ": err}).Error("error updating morph price")
 		return err
 	}
 
-	log.Printf("\nInserted new morph cost in DB:\n#:%v\nPrice: %v\n", morphPrice.TokenId, morphPrice.Price)
+	log.Infof("\nInserted new morph cost in DB:\n#:%v\nPrice: %v\n", morphPrice.TokenId, morphPrice.Price)
 	return nil
 }

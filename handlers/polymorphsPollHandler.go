@@ -2,8 +2,7 @@ package handlers
 
 import (
 	"context"
-	"fmt"
-	"log"
+	log "github.com/sirupsen/logrus"
 	"rarity-backend/constants"
 	"rarity-backend/db"
 	"rarity-backend/models"
@@ -38,7 +37,7 @@ func PersistSinglePolymorph(entity models.PolymorphEntity, polymorphDBName strin
 	}
 	res, err := collection.UpdateOne(context.Background(), filter, update, opts)
 	if err != nil {
-		log.Println("Error updating faces entity in rarity collection.")
+		log.WithFields(log.Fields{"original error: ": err}).Error("error updating faces entity in rarity collection")
 		return "", err
 	}
 
@@ -60,13 +59,19 @@ func PersistMultiplePolymorphs(operations []mongo.WriteModel, polymorphDBName st
 		return err
 	}
 
+	log.SetFormatter(&log.TextFormatter{
+		FullTimestamp:   true,
+		TimestampFormat: "2006-01-02 15:04:05",
+	})
+
 	bulkOption := options.BulkWriteOptions{}
 
 	res, err := collection.BulkWrite(context.Background(), operations, &bulkOption)
 	if err != nil {
-		log.Fatal(err)
+		log.WithFields(log.Fields{"original error: ": err}).Error("error bulk writing in rarity collection")
+		return err
 	}
-	log.Println(fmt.Sprintf("Updated %v entities' rank in faces db", res.ModifiedCount))
+	log.Infof("Updated %v entities' rank in faces db", res.ModifiedCount)
 	return nil
 }
 
@@ -78,18 +83,23 @@ func PersistMintEvents(bsonDocs []interface{}, polymorphDBName string, rarityCol
 	if err != nil {
 		return err
 	}
+	log.SetFormatter(&log.TextFormatter{
+		FullTimestamp:   true,
+		TimestampFormat: "2006-01-02 15:04:05",
+	})
 	opts := &options.InsertManyOptions{Ordered: &options.DefaultOrdered}
 	opts.SetOrdered(false)
 	res, err := collection.InsertMany(context.Background(), bsonDocs, opts)
 	if mongo.IsDuplicateKeyError(err) {
-		log.Printf("Duplicate key error when inserting into rarity collection! Will insert only non-dupicates...")
-		log.Printf("Original error: %v", err)
+		log.WithFields(log.Fields{
+			"original error": err,
+		}).Info("Duplicate key error when inserting into rarity collection! Will insert only non-dupicates...")
 		return nil // returning NIL because non-duplicates will be inserted (setOrdered is set to false)
 	} else if err != nil {
-		log.Printf("Error inserting many documents in MongoDB: %v", err)
+		log.WithFields(log.Fields{"original error: ": err}).Errorf("error inserting many documents in MongoDB: %v", err)
 		return err
 	} else {
-		log.Println(fmt.Sprintf("Inserted %v documents in DB", len(res.InsertedIDs)))
+		log.Infof("Inserted %v documents in DB", len(res.InsertedIDs))
 		return nil
 	}
 }

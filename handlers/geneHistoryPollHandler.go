@@ -3,7 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"log"
+	log "github.com/sirupsen/logrus"
 	"rarity-backend/db"
 	"rarity-backend/models"
 	"strconv"
@@ -19,6 +19,11 @@ func SavePolymorphHistory(entity models.PolymorphHistory, polymorphDBName string
 		return err
 	}
 
+	log.SetFormatter(&log.TextFormatter{
+		FullTimestamp:   true,
+		TimestampFormat: "2006-01-02 15:04:05",
+	})
+
 	var bdoc interface{}
 	json, err := json.Marshal(entity)
 	if err != nil {
@@ -29,13 +34,11 @@ func SavePolymorphHistory(entity models.PolymorphHistory, polymorphDBName string
 		return err
 	}
 
-	//fmt.Println(bdoc)
-
 	_, err = collection.InsertOne(context.Background(), bdoc)
 	if err != nil {
-		log.Println("Error inserting a document in History collection. ", err)
+		log.WithFields(log.Fields{"original error: ": err}).Error("error inserting a document in History collection")
 	}
 
-	log.Println("Inserted history snapshot for polymorph #" + strconv.Itoa(entity.TokenId))
+	log.Infof("Inserted history snapshot for polymorph #" + strconv.Itoa(entity.TokenId))
 	return nil
 }

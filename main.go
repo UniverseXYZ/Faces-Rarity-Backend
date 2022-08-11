@@ -1,25 +1,26 @@
 package main
 
 import (
-	"fmt"
-	"log"
+	"github.com/ethereum/go-ethereum/accounts/abi"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/joho/godotenv"
+	log "github.com/sirupsen/logrus"
 	"os"
-	"strings"
-	"time"
-
 	"rarity-backend/config"
 	"rarity-backend/dlt"
 	"rarity-backend/handlers"
 	"rarity-backend/services"
 	"rarity-backend/store"
 	"rarity-backend/structs"
-
-	"github.com/ethereum/go-ethereum/accounts/abi"
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/joho/godotenv"
+	"strings"
+	"time"
 )
 
 func connectToEthereum() *dlt.EthereumClient {
+	log.SetFormatter(&log.TextFormatter{
+		FullTimestamp:   true,
+		TimestampFormat: "2006-01-02 15:04:05",
+	})
 
 	nodeURL := os.Getenv("NODE_URL_ETHEREUM")
 
@@ -29,12 +30,16 @@ func connectToEthereum() *dlt.EthereumClient {
 		log.Fatal(err)
 	}
 
-	log.Println("Successfully connected to ethereum client")
+	log.Infof("Successfully connected to ethereum client")
 
 	return client
 }
 
 func connectToPolygon() (*dlt.EthereumClient, error) {
+	log.SetFormatter(&log.TextFormatter{
+		FullTimestamp:   true,
+		TimestampFormat: "2006-01-02 15:04:05",
+	})
 
 	nodeURL := os.Getenv("NODE_URL_POLYGON")
 
@@ -44,7 +49,7 @@ func connectToPolygon() (*dlt.EthereumClient, error) {
 		return nil, err
 	}
 
-	log.Println("Successfully connected to polygon client")
+	log.Infof("Successfully connected to polygon client")
 
 	return client, nil
 }
@@ -52,7 +57,7 @@ func connectToPolygon() (*dlt.EthereumClient, error) {
 // initResources is a wrapper function which tries to initialize all .env variables, contract abi, new contract instance.
 //
 // It connects to the ethereum client and returns all information which will be needed at some point from the application
-func initResources() (*dlt.EthereumClient, *dlt.EthereumClient, abi.ABI, *store.Store, *store.Store, string, *structs.ConfigService, structs.DBInfo) {
+func initResources() (*dlt.EthereumClient, *dlt.EthereumClient, abi.ABI, *store.Store, *store.Store, string, string, *structs.ConfigService, structs.DBInfo) {
 	// Load env variables
 	err := godotenv.Load()
 	if err != nil {
@@ -68,6 +73,7 @@ func initResources() (*dlt.EthereumClient, *dlt.EthereumClient, abi.ABI, *store.
 	blocksCollectionNamePolygon := os.Getenv("BLOCKS_COLLECTION_POLYGON")
 	contractAddress := os.Getenv("CONTRACT_ADDRESS")
 	contractAddressPolygon := os.Getenv("CONTRACT_ADDRESS_POLYGON")
+	rootTunnelAddress := os.Getenv("ROOT_TUNNEL_ADDRESS")
 	transactionsCollectionName := os.Getenv("TRANSACTIONS_COLLECTION")
 	historyCollectionName := os.Getenv("HISTORY_COLLECTION")
 	morphCostCollectionName := os.Getenv("MORPH_COST_COLLECTION")
@@ -122,7 +128,7 @@ func initResources() (*dlt.EthereumClient, *dlt.EthereumClient, abi.ABI, *store.
 		HistoryCollectionName:       historyCollectionName,
 		MorphCostCollectionName:     morphCostCollectionName,
 	}
-	return ethClient, polygonClient, contractAbi, instance, instancePolygon, contractAddress, configService, dbInfo
+	return ethClient, polygonClient, contractAbi, instance, instancePolygon, contractAddress, rootTunnelAddress, configService, dbInfo
 }
 
 // main is the entry point of the application.
@@ -135,6 +141,7 @@ func main() {
 		instance,
 		instancePolygon,
 		contractAddress,
+		rootTunnelAddress,
 		configService,
 		dbInfo := initResources()
 
@@ -145,6 +152,7 @@ func main() {
 		instance,
 		instancePolygon,
 		contractAddress,
+		rootTunnelAddress,
 		configService,
 		dbInfo)
 }
@@ -152,7 +160,7 @@ func main() {
 // recoverAndPoll loads transactions and morph cost state in memory from the database and initiates polling mechanism.
 //
 // Recovery function and polling function is the same.
-func recoverAndPoll(ethClient *dlt.EthereumClient, polygonClient *dlt.EthereumClient, contractAbi abi.ABI, store *store.Store, storePolygon *store.Store, contractAddress string, configService *structs.ConfigService, dbInfo structs.DBInfo) {
+func recoverAndPoll(ethClient *dlt.EthereumClient, polygonClient *dlt.EthereumClient, contractAbi abi.ABI, store *store.Store, storePolygon *store.Store, contractAddress string, rootTunnelAddress string, configService *structs.ConfigService, dbInfo structs.DBInfo) {
 	// Build transactions scramble transaction mapping from db
 	txMap, err := handlers.GetTransactionsMapping(dbInfo.FacesDBName, dbInfo.TransactionsCollectionName)
 	if err != nil {
@@ -167,11 +175,15 @@ func recoverAndPoll(ethClient *dlt.EthereumClient, polygonClient *dlt.EthereumCl
 	// Recover immediately
 	// services.RecoverProcess(ethClient, contractAbi, store, contractAddress, configService, dbInfo, txMap, morphCostMap)
 	// Routine one: Start polling after recovery
+	log.SetFormatter(&log.TextFormatter{
+		FullTimestamp:   true,
+		TimestampFormat: "2006-01-02 15:04:05",
+	})
 
 	for {
-		err = services.RecoverProcess(ethClient, polygonClient, contractAbi, store, storePolygon, contractAddress, configService, dbInfo, txMap, morphCostMap)
+		err = services.RecoverProcess(ethClient, polygonClient, contractAbi, store, storePolygon, contractAddress, rootTunnelAddress, configService, dbInfo, txMap, morphCostMap)
 		if err != nil {
-			fmt.Println("Recovering from error... ", err)
+			log.WithFields(log.Fields{"error: ": err}).Error("Recovering from error...")
 			time.Sleep(15 * time.Second)
 			continue
 		} else {
