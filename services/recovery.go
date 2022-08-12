@@ -3,7 +3,6 @@ package services
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"github.com/ethereum/go-ethereum/common"
 	log "github.com/sirupsen/logrus"
 	"math/big"
@@ -154,14 +153,12 @@ func RecoverProcess(ethClient *dlt.EthereumClient, polygonClient *dlt.EthereumCl
 	log.WithFields(log.Fields{
 		"network": "Polygon",
 	}).Infof("Last processed block number: [%v]", lastProcessedBlockNumberPolygon)
-	// fmt.Println("Last processed block number on Polygon: ", lastProcessedBlockNumberPolygon)
 	res, err = handlers.CreateOrUpdateLastProcessedBlock(lastProcessedBlockNumberPolygon, dbInfo.FacesDBName, dbInfo.BlocksCollectionNamePolygon)
 	log.WithFields(log.Fields{
 		"network": "Polygon",
 	}).Info(res)
 	if err != nil {
 		log.WithFields(log.Fields{"network": "Polygon", "original error: ": err}).Error("error creating/updating last processed block...")
-		//log.Println("Error creating/updating last processed block for polygon, ", err)
 		return err
 	}
 
@@ -204,7 +201,7 @@ func processMint(mintEvent types.Log, wg *sync.WaitGroup, contractAbi abi.ABI, c
 		mintsMutex.Transactions = append(mintsMutex.Transactions, txBdoc)
 
 	} else {
-		log.Println("Empty gene mint event for morph id: " + event.MorphId.String())
+		log.Info("Empty gene mint event for morph id: " + event.MorphId.String())
 	}
 	mintsMutex.Mutex.Unlock()
 }
@@ -229,22 +226,21 @@ func processInitialMorphs(morphEvent types.Log, ethClient *dlt.EthereumClient, c
 	var mEvent structs.MorphedEvent
 	err := contractAbi.UnpackIntoInterface(&mEvent, constants.MorphEvent.Name, morphEvent.Data)
 	if err != nil {
-		log.Println("Error unpacking into interface when processing initial morphs. ", err)
+		log.Error("Error unpacking into interface when processing initial morphs. ", err)
 		return err
 	}
 
 	// 1 is Morph event
 	txMap, hasTxMap := txState[morphEvent.TxHash.Hex()]
 	if mEvent.EventType == 1 && (!hasTxMap || !txMap[morphEvent.Index]) {
-		log.Println()
-		log.Printf("\nBlock Num: %v\nTxIndex: %v\nEventIndex:%v\n", morphEvent.BlockNumber, morphEvent.TxIndex, morphEvent.Index)
+		log.Infof("\nBlock Num: %v\nTxIndex: %v\nEventIndex:%v\n", morphEvent.BlockNumber, morphEvent.TxIndex, morphEvent.Index)
 
 		mId := morphEvent.Topics[1].Big()
 
 		// This will get the newest gene
 		result, err := instance.GeneOf(&bind.CallOpts{}, mId)
 		if err != nil {
-			log.Println(err)
+			log.Error(err)
 		}
 		mEvent.NewGene = result
 		var geneDifferences, geneIdx int
@@ -256,7 +252,7 @@ func processInitialMorphs(morphEvent types.Log, ethClient *dlt.EthereumClient, c
 			}
 			block, err := ethClient.Client.BlockByNumber(context.Background(), big.NewInt(int64(morphEvent.BlockNumber)))
 			if err != nil {
-				log.Println("Error fetching latest block number. ", err)
+				log.Error("Error fetching latest block number. ", err)
 				return err
 			}
 			polySnapshot := helpers.CreateMorphSnapshot(geneDifferences, mId.String(), mEvent.OldGene.String(), oldGenesMap[mId.String()], block.Time(), oldAttr, newAttr, morphCostMap, configService)
@@ -281,7 +277,7 @@ func processInitialMorphs(morphEvent types.Log, ethClient *dlt.EthereumClient, c
 		chainId, err := ethClient.Client.ChainID(context.Background())
 
 		if err != nil {
-			fmt.Println("Error fetching chainID...")
+			log.Error("Error fetching chainID...")
 		}
 
 		network := "Ethereum"
@@ -293,10 +289,10 @@ func processInitialMorphs(morphEvent types.Log, ethClient *dlt.EthereumClient, c
 
 		res, err := handlers.PersistSinglePolymorph(morphEntity, dbInfo.FacesDBName, dbInfo.RarityCollectionName, toSaveGene, geneDifferences)
 		if err != nil {
-			log.Println(err)
+			log.Error(err)
 			return err
 		} else {
-			log.Println(res)
+			log.Info(res)
 		}
 
 		if !hasTxMap {
@@ -311,7 +307,7 @@ func processInitialMorphs(morphEvent types.Log, ethClient *dlt.EthereumClient, c
 			LogIndex:    morphEvent.Index,
 		})
 	} else if txMap[morphEvent.Index] {
-		log.Println("Already processed morph event! Skipping...")
+		log.Info("Already processed morph event! Skipping...")
 	}
 
 	mId := morphEvent.Topics[1].Big()
@@ -319,7 +315,7 @@ func processInitialMorphs(morphEvent types.Log, ethClient *dlt.EthereumClient, c
 	// This will get the newest gene
 	result, err := instance.GeneOf(&bind.CallOpts{}, mId)
 	if err != nil {
-		log.Println(fmt.Sprintf("Error getting gene of id: %v", mId))
+		log.Errorf("Error getting gene of id: %v", mId)
 		return err
 	}
 	mEvent.NewGene = result
@@ -337,16 +333,18 @@ func processInitialMorphs(morphEvent types.Log, ethClient *dlt.EthereumClient, c
 	}
 	b.WriteString(".jpg")
 
+	faceMetadataUrl := os.Getenv("FACES_METADATA_URL")
+
 	// Currently, the front-end fetches imageURLs from the rarity-backend instead of from the Metadata API
 	// So if the image doesn't exist, we query the Faces Metadata cloud function to get it generated
-	//if !metadata.ImageExists(b.String()) {
-	//	_, err := http.Get(constants.FACES_METADATA_URL + mId.String())
-	//	if err != nil {
-	//		log.Printf("Couldn't query images function. Original error: %v\n", err)
-	//	} else {
-	//		log.Println("Queried Faces Metadata with link: ", constants.FACES_METADATA_URL+mId.String())
-	//	}
-	//}
+	if !metadata.ImageExists(b.String()) {
+		_, err := http.Get(faceMetadataUrl + mId.String())
+		if err != nil {
+			log.Error("Couldn't query images function. Original error: %v\n", err)
+		} else {
+			log.Info("Queried Faces Metadata with link: ", faceMetadataUrl+mId.String())
+		}
+	}
 	return nil
 }
 
@@ -367,7 +365,7 @@ func processFinalMorphs(morphEvent types.Log, ethClient *dlt.EthereumClient, con
 	var mEvent structs.MorphedEvent
 	err := contractAbi.UnpackIntoInterface(&mEvent, constants.MorphEvent.Name, morphEvent.Data)
 	if err != nil {
-		log.Println("Error unpacking into interface when processing final morphs. ", err)
+		log.Error("Error unpacking into interface when processing final morphs. ", err)
 		return err
 	}
 
@@ -376,7 +374,7 @@ func processFinalMorphs(morphEvent types.Log, ethClient *dlt.EthereumClient, con
 	// This will get the newest gene
 	result, err := instance.GeneOf(&bind.CallOpts{}, mId)
 	if err != nil {
-		log.Println(fmt.Sprintf("Error getting gene of id: %v", mId))
+		log.Errorf("Error getting gene of id: %v", mId)
 		return err
 	}
 	mEvent.NewGene = result
@@ -401,9 +399,9 @@ func processFinalMorphs(morphEvent types.Log, ethClient *dlt.EthereumClient, con
 	if !metadata.ImageExists(b.String()) {
 		_, err := http.Get(facesMetadataUrl + mId.String())
 		if err != nil {
-			log.Printf("Couldn't query images function. Original error: %v\n", err)
+			log.Errorf("Couldn't query images function. Original error: %v\n", err)
 		} else {
-			log.Println("Queried Faces Metadata with link: ", facesMetadataUrl+mId.String())
+			log.Info("Queried Faces Metadata with link: ", facesMetadataUrl+mId.String())
 		}
 	}
 
@@ -435,7 +433,7 @@ func processFinalMorphs(morphEvent types.Log, ethClient *dlt.EthereumClient, con
 	chainId, err := ethClient.Client.ChainID(context.Background())
 
 	if err != nil {
-		fmt.Println("Error fetching chainID...")
+		log.Error("Error fetching chainID...")
 	}
 
 	network := "Ethereum"
@@ -446,10 +444,10 @@ func processFinalMorphs(morphEvent types.Log, ethClient *dlt.EthereumClient, con
 
 	res, err := handlers.PersistSinglePolymorph(morphEntity, dbInfo.FacesDBName, dbInfo.RarityCollectionName, oldGenesMap[mId.String()], geneDifferences)
 	if err != nil {
-		log.Println("Error persisting single polymorph. ", err)
+		log.Error("Error persisting single polymorph. ", err)
 		return err
 	} else {
-		log.Println(res)
+		log.Info(res)
 		return nil
 	}
 }

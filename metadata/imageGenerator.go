@@ -26,7 +26,6 @@ func CheckImageAndCreate(imageURL string, genes []string) {
 func ImageExists(imageURL string) bool {
 	resp, err := http.Get(imageURL)
 	if err != nil {
-		// log.Fatalln(err)
 		log.Println(err)
 		return false
 	}
